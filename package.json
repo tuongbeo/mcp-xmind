@@ -1,48 +1,38 @@
 {
-  "name": "@41px/mcp-xmind",
-  "version": "2.1.1",
-  "description": "MCP server for XMind",
-  "mcpName": "io.github.apeyroux/mcp-xmind",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/apeyroux/mcp-xmind"
-  },
-  "homepage": "https://github.com/apeyroux/mcp-xmind#readme",
-  "keywords": [
-    "mcp",
-    "xmind",
-    "mindmap",
-    "model-context-protocol"
-  ],
-  "license": "MIT",
-  "author": "Alexandre Peyroux <alex@fmap.it>",
+  "name": "mcp-xmind-cf",
+  "version": "2.0.0",
+  "description": "XMind MCP Server on Cloudflare Workers",
   "type": "module",
-  "bin": {
-    "mcp-server-xmind": "dist/index.js"
-  },
-  "files": [
-    "dist"
-  ],
   "scripts": {
-    "build": "tsc && shx chmod +x dist/*.js",
-    "prepare": "npm run build",
-    "watch": "tsc --watch",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc",
+    "test": "vitest run --config vitest.config.ts",
+    "test:unit": "vitest run --config vitest.config.ts test/unit",
+    "test:integration": "vitest run --config vitest.config.ts test/integration",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:all": "vitest run --config vitest.all.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run typecheck && npm run test:unit && npm run test:integration"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.11.0",
-    "adm-zip": "^0.5.16",
-    "glob": "^10.3.10",
-    "minimatch": "^10.0.1",
-    "zod": "^3.25.0"
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "fast-xml-parser": "^4.5.3",
+    "fflate": "^0.8.2",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.4"
   },
   "devDependencies": {
-    "@types/adm-zip": "^0.5.7",
-    "@types/minimatch": "^5.1.2",
-    "@types/node": "^20.17.10",
-    "shx": "^0.3.4",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.0"
+    "@cloudflare/vitest-pool-workers": "^0.8.4",
+    "@cloudflare/workers-types": "^4.20260316.1",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9.25.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.9.3",
+    "vitest": "^3.1.4",
+    "wrangler": "^4.12.0"
   }
 }
