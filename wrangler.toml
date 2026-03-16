@@ -3,14 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2025-03-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Single KV namespace — stores both .xmind file content (base64) and metadata
+# No R2 required! Works on Cloudflare Workers free plan.
 [[kv_namespaces]]
-binding = "XMIND_META"
+binding = "XMIND_STORE"
 id = "YOUR_KV_NAMESPACE_ID"
-preview_id = "YOUR_KV_PREVIEW_ID"
-
-[[r2_buckets]]
-binding = "XMIND_FILES"
-bucket_name = "xmind-files"
 
 [vars]
 MCP_AUTH_TOKEN = ""

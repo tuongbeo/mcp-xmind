@@ -11,8 +11,7 @@ import { registerExportTools } from './tools/export.js';
 import { registerStorageTools } from './tools/storage.js';
 
 export interface Env {
-  XMIND_FILES: R2Bucket;
-  XMIND_META: KVNamespace;
+  XMIND_STORE: KVNamespace;  // Single KV namespace — stores both files and metadata
   MCP_AUTH_TOKEN: string;
   MAX_FILE_SIZE_MB: string;
 }
@@ -50,10 +49,9 @@ export default {
       catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json' } }); }
       const chunks: string[] = []; let statusCode = 200; const resHeaders: Record<string, string> = {};
       const resShim = { setHeader: (n: string, v: string) => { resHeaders[n] = v; }, writeHead: (c: number) => { statusCode = c; }, write: (s: string) => { chunks.push(s); }, end: (s?: string) => { if (s) chunks.push(s); }, json: (d: unknown) => { chunks.push(JSON.stringify(d)); }, headersSent: false, on: () => resShim };
-      await transport.handleRequest(reqShim as never, resShim as never, body);
+      await transport.handleRequest(resShim as never, resShim as never, body);
       return new Response(chunks.join(''), { status: statusCode, headers: { 'Content-Type': 'application/json', ...resHeaders } });
     }
     return new Response(JSON.stringify({ error: 'Not Found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
-    function reqShim() {} // placeholder
   },
 };

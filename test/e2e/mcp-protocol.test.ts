@@ -54,7 +54,7 @@ describe('MCP server — wrangler.toml config', () => {
     const { readFileSync } = await import('fs');
     const content = readFileSync('/Users/tuongbeo/GitHub/mcp-xmind/wrangler.toml', 'utf-8');
     expect(content).toContain('name = "mcp-xmind"');
-    expect(content).toContain('XMIND_FILES');
-    expect(content).toContain('XMIND_META');
+    expect(content).toContain('XMIND_STORE');
+    expect(content).toContain('kv_namespaces');
   });
 });
