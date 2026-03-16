@@ -1,23 +1,12 @@
-import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+import { defineConfig } from 'vitest/config';
 
-// Workers pool config for E2E tests — requires wrangler.toml with valid KV/R2 IDs
-// Run with: npx vitest run --config vitest.e2e.config.ts
-export default defineWorkersConfig({
+// E2E tests run in Node environment (not Miniflare) because the MCP SDK
+// pulls in CJS-only dependencies (ajv) that are incompatible with the
+// Cloudflare Workers runtime shim. The actual worker is tested via HTTP
+// in the deployed environment (see CLAUDE.md Phase 5).
+export default defineConfig({
   test: {
     include: ['test/e2e/**/*.test.ts'],
-    poolOptions: {
-      workers: {
-        main: './src/index.ts',
-        wrangler: { configPath: './wrangler.toml' },
-        miniflare: {
-          kvNamespaces: ['XMIND_META'],
-          r2Buckets: ['XMIND_FILES'],
-          bindings: {
-            MCP_AUTH_TOKEN: '',
-            MAX_FILE_SIZE_MB: '10',
-          },
-        },
-      },
-    },
+    environment: 'node',
   },
 });

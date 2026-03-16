@@ -59,10 +59,20 @@ function buildToolsList(server: McpServer) {
 
 async function callTool(server: McpServer, name: string, args: Record<string, unknown>) {
   const rt = getTools(server);
-  if (!rt[name]) throw { code: -32601, message: `Tool not found: ${name}` };
+  const tool = rt[name];
+  if (!tool) throw { code: -32601, message: `Tool not found: ${name}` };
+
+  // SDK 1.27.x changed the internal API:
+  //   - executeToolHandler(tool, args, extra)  ← takes the tool OBJECT, not the name
+  //   - validateToolInput(tool, args, name)    ← validates + parses via Zod
+  // Using these private methods keeps us aligned with SDK internals.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (server as unknown as { executeToolHandler: (n: string, a: unknown) => Promise<unknown> })
-    .executeToolHandler(name, args);
+  const s = server as unknown as {
+    validateToolInput: (tool: unknown, args: unknown, name: string) => Promise<unknown>;
+    executeToolHandler: (tool: unknown, args: unknown, extra: Record<string, unknown>) => Promise<unknown>;
+  };
+  const validatedArgs = await s.validateToolInput(tool, args, name);
+  return s.executeToolHandler(tool, validatedArgs, {});
 }
 
 type JsonRpcRequest = { jsonrpc: string; id?: unknown; method: string; params?: unknown };

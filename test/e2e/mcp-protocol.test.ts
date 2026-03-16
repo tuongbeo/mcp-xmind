@@ -8,8 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 function buildTestServer() {
   // We create a minimal Env-like object to satisfy tool registrations
   const fakeEnv = {
-    XMIND_FILES: {} as R2Bucket,
-    XMIND_META: {} as KVNamespace,
+    XMIND_STORE: {} as KVNamespace,
     MCP_AUTH_TOKEN: '',
     MAX_FILE_SIZE_MB: '10',
   };
