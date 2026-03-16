@@ -191,7 +191,12 @@ function parseTopicXml(raw: Record<string, unknown>, fallbackId: string): XMindT
   const title = String(raw.title ?? '');
   const topic: XMindTopic = { id, title };
 
-  const childrenRaw = raw.children as Record<string, unknown> | undefined;
+  // fast-xml-parser isArray config makes `children` an array: [{ topic: [...] }]
+  // Unwrap the first element to get { topic: [...] }
+  const childrenArr = raw.children;
+  const childrenRaw = Array.isArray(childrenArr)
+    ? (childrenArr[0] as Record<string, unknown> | undefined)
+    : (childrenArr as Record<string, unknown> | undefined);
   if (childrenRaw && childrenRaw.topic) {
     const topics = Array.isArray(childrenRaw.topic) ? childrenRaw.topic : [childrenRaw.topic];
     topic.children = topics.map((c: unknown, i: number) =>

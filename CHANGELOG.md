@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.0.1] - 2026-03-17
+
+### Fixed
+- **SDK 1.27.x compatibility** (`src/index.ts`): `callTool()` now passes the tool
+  object (not the tool name string) to `executeToolHandler(tool, args, extra)` and
+  uses `validateToolInput(tool, args, name)` for Zod parsing. The old signature
+  `executeToolHandler(name, args)` was removed in SDK 1.27.x, causing every tool
+  call to crash with `Cannot use 'in' operator to search for 'createTask' in
+  undefined`.
+- **XML parser children bug** (`src/core/xmind-parser.ts`): `fast-xml-parser` with
+  `isArray: ['children']` wraps `<children>` in an array. `parseTopicXml` now
+  unwraps `children[0]` before accessing `.topic`, fixing child parsing for XMind 8
+  XML files.
+
+### Added (tests)
+- `test/unit/xmind-parser-xml.test.ts` — 12 tests covering the XMind 8 XML path
+  (`content.xml`): children, notes, multi-sheet, fallback IDs, error cases.
+- `test/unit/kv-adapter.test.ts` — 12 tests covering `KVAdapter`: putFile/getFile
+  roundtrip, Uint8Array input, delete, index/get/delete metadata, list with prefix,
+  listFileKeys pagination.
+- `test/unit/tools-handlers.test.ts` — 28 tests exercising all 18 MCP tool handlers
+  directly (bypassing HTTP), covering create, read, update, add, move, delete,
+  search, tasks, export, upload, and download.
+
+### Changed
+- `vitest.e2e.config.ts`: switched from `defineWorkersConfig` (Miniflare) to plain
+  `defineConfig` with `environment: 'node'`. MCP SDK pulls CJS-only `ajv` which
+  crashes in the CF Workers runtime shim.
+- `test/e2e/mcp-protocol.test.ts`: updated `fakeEnv` to `XMIND_STORE` (single KV
+  binding) replacing the now-removed `XMIND_FILES` + `XMIND_META` pair.
+- `package.json`: pinned `vitest` and `@vitest/coverage-v8` to exact version `3.1.4`
+  to prevent npm deduplication from dropping them when `NODE_ENV=production`.
+
+### Coverage (after this release)
+| Layer | Statements | Functions | Target |
+|---|---|---|---|
+| `src/core/` | 91% | 98% | ≥90% ✅ |
+| `src/tools/` | 100% | 100% | ≥80% ✅ |
+| `src/storage/` | 98% | 100% | ≥80% ✅ |
+
+**Total: 126 tests passing** (42 unit · 27 integration · 52 new unit · 5 e2e)
+
 ## [2.0.0] - 2025-01-18
 
 ### Breaking Changes
