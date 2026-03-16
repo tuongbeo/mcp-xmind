@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 # No R2 required! Works on Cloudflare Workers free plan.
 [[kv_namespaces]]
 binding = "XMIND_STORE"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "097c51aad30a41e9a661d12d67a79b48"
 
 [vars]
 MCP_AUTH_TOKEN = ""
