@@ -106,10 +106,13 @@ async function handleRequest(req: JsonRpcRequest, env: Env): Promise<unknown> {
   }
 }
 
+const SESSION_ID = 'xmind-public-server';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-session-id',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Session-Id',
+  'Access-Control-Expose-Headers': 'Mcp-Session-Id',
 };
 
 export default {
@@ -126,7 +129,7 @@ export default {
     const { pathname } = new URL(request.url);
 
     if (pathname === '/health')
-      return Response.json({ status: 'ok', version: '2.0.0', timestamp: new Date().toISOString() }, { headers: CORS });
+      return Response.json({ status: 'ok', version: '2.0.0', timestamp: new Date().toISOString() }, { headers: { ...CORS, 'Mcp-Session-Id': SESSION_ID } });
 
     if (pathname !== '/mcp')
       return Response.json({ error: 'Not Found' }, { status: 404, headers: CORS });
@@ -142,6 +145,6 @@ export default {
     const responses = await Promise.all(reqs.map(r => handleRequest(r, env)));
     const out = Array.isArray(body) ? responses : responses[0];
 
-    return Response.json(out, { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    return Response.json(out, { headers: { ...CORS, 'Content-Type': 'application/json', 'Mcp-Session-Id': SESSION_ID } });
   },
 };
