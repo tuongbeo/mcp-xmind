@@ -27,6 +27,7 @@ export interface XMindTopic {
   tasks?: XMindTask;
   branch?: 'folded' | 'open';
   structureClass?: string;      // "org.xmind.ui.fishbone.leftHeaded" etc.
+  _isCallout?: boolean;         // Internal flag: renders as <topics type="callout"> in XML
 }
 
 export interface XMindRelationship {

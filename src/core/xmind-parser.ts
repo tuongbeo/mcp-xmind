@@ -1,212 +1,214 @@
-import { XMLParser } from 'fast-xml-parser';
-import { unzipXmind } from '../utils/zip.js';
-import { XmindError } from '../utils/errors.js';
-import type {
-  XMindDocument,
-  XMindSheet,
-  XMindTopic,
-  XMindRelationship,
-  XMindTask,
-  LayoutType,
-} from './types.js';
+/**
+ * xmind-parser.ts
+ *
+ * Parses a .xmind file buffer → XMindDocument.
+ * Supports both formats:
+ *   - content.xml  (XMind 8 / XMind 25.x, preferred)
+ *   - content.json (XMind Zen fallback)
+ */
 
-const decoder = new TextDecoder();
+import { unzipSync, strFromU8 } from 'fflate';
+import { XMLParser } from 'fast-xml-parser';
+import type { XMindDocument, XMindSheet, XMindTopic, XMindRelationship, XMindTask } from './types.js';
+import { XmindError } from '../utils/errors.js';
+
+// ─── Public API ────────────────────────────────────────────────────────────
 
 export function parseXmindBuffer(buffer: ArrayBuffer): XMindDocument {
   let files: Record<string, Uint8Array>;
   try {
-    files = unzipXmind(buffer);
+    files = unzipSync(new Uint8Array(buffer));
   } catch {
-    throw new XmindError('CORRUPT_FILE', 'Failed to unzip .xmind file');
-  }
-
-  if ('content.json' in files) {
-    const text = decoder.decode(files['content.json']);
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new XmindError('PARSE_ERROR', 'Failed to parse content.json');
-    }
-    return parseContentJson(json);
+    throw new XmindError('CORRUPT_FILE', 'Failed to unzip: not a valid ZIP/XMind archive');
   }
 
   if ('content.xml' in files) {
-    const xml = decoder.decode(files['content.xml']);
-    return parseContentXml(xml);
+    return parseContentXml(strFromU8(files['content.xml']));
   }
-
-  throw new XmindError('CORRUPT_FILE', 'No content.json or content.xml found in .xmind file');
+  if ('content.json' in files) {
+    try {
+      return parseContentJson(JSON.parse(strFromU8(files['content.json'])));
+    } catch (e) {
+      throw new XmindError('PARSE_ERROR', `Invalid content.json: ${e}`);
+    }
+  }
+  throw new XmindError('CORRUPT_FILE', 'Neither content.xml nor content.json found');
 }
 
-function parseContentJson(json: unknown): XMindDocument {
-  if (!Array.isArray(json)) {
-    throw new XmindError('PARSE_ERROR', 'content.json must be an array of sheets');
-  }
+// ─── XML parser ────────────────────────────────────────────────────────────
 
-  const sheets: XMindSheet[] = json.map((rawSheet: unknown, idx: number) => {
-    const sheet = rawSheet as Record<string, unknown>;
-    const id = String(sheet.id ?? `sheet-${idx}`);
-    const title = String(sheet.title ?? `Sheet ${idx + 1}`);
-    const rootTopicRaw = sheet.rootTopic as Record<string, unknown>;
-    if (!rootTopicRaw) {
-      throw new XmindError('PARSE_ERROR', `Sheet ${idx} has no rootTopic`);
-    }
-    const rootTopic = parseTopicJson(rootTopicRaw, `${idx}-0-0`);
-    const relationships = parseRelationshipsJson(sheet.relationships);
-    const theme = typeof sheet.theme === 'string' ? sheet.theme : undefined;
-    const layout = parseLayout(sheet.structureClass);
-
-    return { id, title, rootTopic, relationships, theme, layout };
+export function parseContentXml(xml: string): XMindDocument {
+  const parser = new XMLParser({
+    ignoreAttributes:    false,
+    attributeNamePrefix: '@_',
+    isArray: (name) =>
+      ['sheet', 'topic', 'topics', 'label', 'marker-ref', 'relationship'].includes(name),
   });
 
-  return { sheets };
+  let root: any;
+  try {
+    root = parser.parse(xml);
+  } catch (e) {
+    throw new XmindError('PARSE_ERROR', `XML parse error: ${e}`);
+  }
+
+  const xmap = root['xmap-content'];
+  if (!xmap) throw new XmindError('PARSE_ERROR', 'Missing <xmap-content>');
+
+  const rawSheets: any[] = Array.isArray(xmap.sheet)
+    ? xmap.sheet
+    : xmap.sheet ? [xmap.sheet] : [];
+
+  return { sheets: rawSheets.map(parseXmlSheet) };
 }
 
-function parseTopicJson(raw: Record<string, unknown>, fallbackId: string): XMindTopic {
-  const id = String(raw.id ?? fallbackId);
-  const title = String(raw.title ?? '');
+function parseXmlSheet(raw: any): XMindSheet {
+  const rootRaw = Array.isArray(raw.topic) ? raw.topic[0] : raw.topic;
+  const sheet: XMindSheet = {
+    id:        raw['@_id']   ?? crypto.randomUUID(),
+    title:     raw.title     ?? 'Untitled',
+    rootTopic: parseXmlTopic(rootRaw),
+  };
 
-  const topic: XMindTopic = { id, title };
+  // Relationships
+  const relNode = raw.relationships?.relationship;
+  if (relNode && Array.isArray(relNode) && relNode.length > 0) {
+    sheet.relationships = relNode.map((r: any): XMindRelationship => ({
+      id:     r['@_id']   ?? crypto.randomUUID(),
+      end1Id: r['@_end1'] ?? '',
+      end2Id: r['@_end2'] ?? '',
+      title:  r.title,
+    }));
+  }
 
-  if (raw.children && typeof raw.children === 'object') {
-    const attached = (raw.children as Record<string, unknown>).attached;
-    if (Array.isArray(attached)) {
-      topic.children = attached.map((c: unknown, i: number) =>
-        parseTopicJson(c as Record<string, unknown>, `${id}-${i}`)
-      );
+  return sheet;
+}
+
+
+function parseXmlTopic(raw: any): XMindTopic {
+  if (!raw) return { id: crypto.randomUUID(), title: '' };
+
+  const topic: XMindTopic = {
+    id:    raw['@_id'] ?? crypto.randomUUID(),
+    title: raw.title   ?? '',
+  };
+
+  if (raw['@_structure-class']) topic.structureClass = raw['@_structure-class'];
+
+  // Children: two formats are valid:
+  //   1. Builder format: <children><topics type="attached"><topic>…</topics></children>
+  //   2. Simple format:  <children><topic>…<topic>…</children>  (used by tests + some editors)
+  const childrenNode = raw.children;
+  if (childrenNode) {
+    const children: XMindTopic[] = [];
+
+    if (childrenNode.topics) {
+      // Format 1: wrapped in <topics type="...">
+      const topicsArr: any[] = Array.isArray(childrenNode.topics)
+        ? childrenNode.topics
+        : [childrenNode.topics];
+      for (const block of topicsArr) {
+        const type      = block['@_type'];
+        const topicList = Array.isArray(block.topic)
+          ? block.topic
+          : block.topic ? [block.topic] : [];
+        for (const t of topicList) {
+          const child = parseXmlTopic(t);
+          if (type === 'callout') child._isCallout = true;
+          children.push(child);
+        }
+      }
+    } else if (childrenNode.topic) {
+      // Format 2: direct <topic> children (simple/test format)
+      const topicList = Array.isArray(childrenNode.topic)
+        ? childrenNode.topic
+        : [childrenNode.topic];
+      for (const t of topicList) children.push(parseXmlTopic(t));
     }
+
+    if (children.length > 0) topic.children = children;
   }
 
-  if (raw.notes && typeof raw.notes === 'object') {
-    const n = raw.notes as Record<string, unknown>;
-    topic.notes = {};
-    if (typeof n.plain === 'object' && n.plain !== null) {
-      topic.notes.plain = String((n.plain as Record<string, unknown>).content ?? '');
-    } else if (typeof n.plain === 'string') {
-      topic.notes.plain = n.plain;
-    }
-    if (typeof n.html === 'string') topic.notes.html = n.html;
+  // Tasks — stored as <task status="done" priority="1" progress="100" .../>
+  if (raw.task) {
+    const t = raw.task;
+    const task: XMindTask = {};
+    if (t['@_status'])   task.status   = t['@_status'] as XMindTask['status'];
+    if (t['@_priority']) task.priority = Number(t['@_priority']) as XMindTask['priority'];
+    if (t['@_progress']) task.progress = Number(t['@_progress']);
+    if (t['@_due'])      task.due      = t['@_due'];
+    if (t['@_assignee']) task.assignee = t['@_assignee'];
+    topic.tasks = task;
   }
 
-  if (Array.isArray(raw.labels)) {
-    topic.labels = raw.labels.map(String);
+  // Notes
+  if (raw.notes?.plain) {
+    topic.notes = { plain: String(raw.notes.plain) };
   }
 
-  if (Array.isArray(raw.markers)) {
-    topic.markers = (raw.markers as Array<Record<string, unknown>>).map((m) =>
-      String(m.markerId ?? m)
-    );
+  // Markers
+  const refs = raw['marker-refs']?.['marker-ref'];
+  if (refs) {
+    const list = Array.isArray(refs) ? refs : [refs];
+    topic.markers = list.map((r: any) => r['@_marker-id']).filter(Boolean);
   }
 
-  const taskData = extractTaskFromMarkers(topic.markers ?? []);
-  if (taskData || raw.task) {
-    topic.tasks = { ...(taskData ?? {}), ...(raw.task as XMindTask ?? {}) };
+  // Labels
+  const lbls = raw.labels?.label;
+  if (lbls) {
+    topic.labels = (Array.isArray(lbls) ? lbls : [lbls]).map(String);
   }
 
-  if (typeof raw.href === 'string') topic.href = raw.href;
-  if (typeof raw.callout === 'string') topic.callout = raw.callout;
-  if (raw.branch === 'folded' || raw.branch === 'open') topic.branch = raw.branch;
-  if (typeof raw.structureClass === 'string') topic.structureClass = raw.structureClass;
+  if (raw['xlink:href']) topic.href = raw['xlink:href'];
 
   return topic;
 }
 
-function extractTaskFromMarkers(markers: string[]): XMindTask | null {
-  const task: XMindTask = {};
-  let hasTask = false;
+// ─── JSON parser (XMind Zen fallback) ──────────────────────────────────────
 
-  for (const marker of markers) {
-    if (marker === 'task-done') { task.status = 'done'; hasTask = true; }
-    else if (marker === 'task-todo') { task.status = 'todo'; hasTask = true; }
-    else if (marker === 'task-inf') { task.status = 'in-progress'; hasTask = true; }
-    else if (marker.startsWith('priority-')) {
-      const p = parseInt(marker.replace('priority-', ''));
-      if (p >= 1 && p <= 3) { task.priority = p as 1|2|3; hasTask = true; }
-    }
+function parseContentJson(arr: any[]): XMindDocument {
+  if (!Array.isArray(arr)) {
+    throw new XmindError('PARSE_ERROR', 'content.json root must be an array');
   }
-
-  return hasTask ? task : null;
+  return { sheets: arr.map(parseJsonSheet) };
 }
 
-function parseRelationshipsJson(raw: unknown): XMindRelationship[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  return raw.map((r: unknown) => {
-    const rel = r as Record<string, unknown>;
-    return {
-      id: String(rel.id ?? ''),
-      end1Id: String(rel.end1Id ?? ''),
-      end2Id: String(rel.end2Id ?? ''),
-      title: typeof rel.title === 'string' ? rel.title : undefined,
-    };
-  });
+function parseJsonSheet(raw: any): XMindSheet {
+  return {
+    id:        raw.id    ?? crypto.randomUUID(),
+    title:     raw.title ?? 'Untitled',
+    rootTopic: parseJsonTopic(raw.rootTopic),
+  };
 }
 
-function parseLayout(structureClass: unknown): LayoutType | undefined {
-  if (typeof structureClass !== 'string') return undefined;
-  if (structureClass.includes('fishbone')) return 'fishbone';
-  if (structureClass.includes('org-chart') || structureClass.includes('orgchart')) return 'org-chart';
-  if (structureClass.includes('timeline')) return 'timeline';
-  if (structureClass.includes('tree-table')) return 'tree-table';
-  return 'map';
-}
+function parseJsonTopic(raw: any): XMindTopic {
+  if (!raw) return { id: crypto.randomUUID(), title: '' };
 
-export function parseContentXml(xml: string): XMindDocument {
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    isArray: (name) => ['sheet', 'topic', 'children', 'relationship'].includes(name),
-  });
+  const topic: XMindTopic = {
+    id:    raw.id    ?? crypto.randomUUID(),
+    title: raw.title ?? '',
+  };
 
-  let result: Record<string, unknown>;
-  try {
-    result = parser.parse(xml) as Record<string, unknown>;
-  } catch {
-    throw new XmindError('PARSE_ERROR', 'Failed to parse content.xml');
-  }
+  if (raw.structureClass) topic.structureClass = raw.structureClass;
+  if (raw.href)           topic.href = raw.href;
+  if (raw.labels)         topic.labels = raw.labels;
 
-  const xmap = result['xmap-content'] as Record<string, unknown> | undefined;
-  if (!xmap) throw new XmindError('PARSE_ERROR', 'Invalid XMind 8 XML format');
-
-  const rawSheets = Array.isArray(xmap.sheet) ? xmap.sheet : [xmap.sheet];
-  const sheets: XMindSheet[] = rawSheets.map((rawSheet: unknown, idx: number) => {
-    const sheet = rawSheet as Record<string, unknown>;
-    return parseSheetXml(sheet, idx);
-  });
-
-  return { sheets };
-}
-
-function parseSheetXml(sheet: Record<string, unknown>, idx: number): XMindSheet {
-  const id = String((sheet as Record<string, unknown>)['@_id'] ?? `sheet-${idx}`);
-  const title = String(sheet.title ?? `Sheet ${idx + 1}`);
-  const rootTopics = Array.isArray(sheet.topic) ? sheet.topic : [sheet.topic];
-  const rootTopic = parseTopicXml(rootTopics[0] as Record<string, unknown>, `${idx}-0-0`);
-
-  return { id, title, rootTopic };
-}
-
-function parseTopicXml(raw: Record<string, unknown>, fallbackId: string): XMindTopic {
-  const id = String((raw as Record<string, unknown>)['@_id'] ?? fallbackId);
-  const title = String(raw.title ?? '');
-  const topic: XMindTopic = { id, title };
-
-  // fast-xml-parser isArray config makes `children` an array: [{ topic: [...] }]
-  // Unwrap the first element to get { topic: [...] }
-  const childrenArr = raw.children;
-  const childrenRaw = Array.isArray(childrenArr)
-    ? (childrenArr[0] as Record<string, unknown> | undefined)
-    : (childrenArr as Record<string, unknown> | undefined);
-  if (childrenRaw && childrenRaw.topic) {
-    const topics = Array.isArray(childrenRaw.topic) ? childrenRaw.topic : [childrenRaw.topic];
-    topic.children = topics.map((c: unknown, i: number) =>
-      parseTopicXml(c as Record<string, unknown>, `${id}-${i}`)
+  // markers: [{markerId:"task-done"}] → ["task-done"]
+  if (raw.markers) {
+    topic.markers = (raw.markers as any[]).map((m) =>
+      typeof m === 'string' ? m : m.markerId ?? String(m)
     );
   }
 
-  if (raw.notes) {
-    const notes = raw.notes as Record<string, unknown>;
-    topic.notes = { plain: String(notes.plain ?? '') };
+  // notes: {plain:{content:"..."}} or {plain:"..."}
+  if (raw.notes?.plain) {
+    const p = raw.notes.plain;
+    topic.notes = { plain: typeof p === 'string' ? p : (p.content ?? '') };
+  }
+
+  const attached = raw.children?.attached ?? [];
+  if (attached.length > 0) {
+    topic.children = (attached as any[]).map(parseJsonTopic);
   }
 
   return topic;

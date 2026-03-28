@@ -6,9 +6,12 @@ export function unzipXmind(buffer: ArrayBuffer): Record<string, Uint8Array> {
 }
 
 export function buildXmindZip(files: Record<string, string | Uint8Array>): Uint8Array {
-  const zipFiles: Record<string, Uint8Array> = {};
+  const zipFiles: Record<string, [Uint8Array, { level: 0 }]> = {};
   for (const [name, content] of Object.entries(files)) {
-    zipFiles[name] = typeof content === 'string' ? strToU8(content) : content;
+    const data = typeof content === 'string' ? strToU8(content) : content;
+    // CRITICAL: XMind 25.x validates ZIP compression method.
+    // Must use STORED (level: 0), not DEFLATED — or it throws "not a valid XMind File".
+    zipFiles[name] = [data, { level: 0 }];
   }
   return zipSync(zipFiles);
 }

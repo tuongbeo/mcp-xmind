@@ -88,3 +88,123 @@ function collectTableRows(topic: XMindTopic, path: string[], rows: string[]): vo
 function esc(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+// ─── Markmap renderer ──────────────────────────────────────────────────────────
+
+export interface ToMarkmapOptions {
+  maxDepth?: number;
+  includeNotes?: boolean;
+  includeTasks?: boolean;
+}
+
+/**
+ * Convert an XMindSheet to markmap-compatible markdown.
+ * markmap uses ATX headings (#, ##, …) for depth 1-6,
+ * then unordered list items for deeper levels.
+ * Task status icons and short notes are appended inline.
+ */
+export function toMarkmapMarkdown(sheet: XMindSheet, opts: ToMarkmapOptions = {}): string {
+  const { maxDepth = Infinity, includeNotes = false, includeTasks = true } = opts;
+  const lines: string[] = [];
+
+  function walk(topic: XMindTopic, depth: number): void {
+    if (depth > maxDepth) return;
+    const heading = depth <= 6 ? '#'.repeat(depth) : '-';
+    let line = `${heading} ${topic.title}`;
+
+    if (includeTasks && topic.tasks?.status) {
+      const icon: Record<string, string> = { todo: '☐', 'in-progress': '◑', done: '☑' };
+      line += ` ${icon[topic.tasks.status] ?? ''}`;
+    }
+    if (topic.markers?.length) {
+      line += `  <!-- markers: ${topic.markers.join(', ')} -->`;
+    }
+    lines.push(line);
+
+    if (includeNotes && topic.notes?.plain) {
+      const preview = topic.notes.plain.slice(0, 80).replace(/\n/g, ' ');
+      const indent = '  '.repeat(Math.min(depth, 6));
+      lines.push(`${indent}*${preview}*`);
+    }
+
+    for (const child of topic.children ?? []) walk(child, depth + 1);
+  }
+
+  walk(sheet.rootTopic, 1);
+  return lines.join('\n');
+}
+
+/**
+ * Build a self-contained markmap HTML string for inline rendering
+ * inside Claude Chat / Claude Cowork artifacts.
+ * Uses markmap-autoloader from jsdelivr CDN (within CSP allowlist).
+ */
+export function buildMarkmapHtml(
+  markdown: string,
+  title: string,
+  opts: { theme?: 'default' | 'colorful' | 'dark' | 'forest'; autoFit?: boolean; maxWidth?: number } = {}
+): string {
+  const { theme = 'default', autoFit = true, maxWidth = 320 } = opts;
+
+  const colorMap: Record<string, string[]> = {
+    default:  ['#534AB7', '#1D9E75', '#185FA5', '#BA7517', '#993556', '#0F6E56'],
+    colorful: ['#E24B4A', '#534AB7', '#1D9E75', '#185FA5', '#D4537E', '#BA7517'],
+    dark:     ['#7F77DD', '#5DCAA5', '#378ADD', '#EF9F27', '#D4537E', '#9FE1CB'],
+    forest:   ['#1D9E75', '#0F6E56', '#3B6D11', '#639922', '#085041', '#04342C'],
+  };
+  const colors = colorMap[theme] ?? colorMap.default;
+  const freezeLevel = theme === 'colorful' ? 6 : 2;
+
+  const frontmatter = [
+    '---',
+    'markmap:',
+    `  colorFreezeLevel: ${freezeLevel}`,
+    `  color: [${colors.map(c => `"${c}"`).join(', ')}]`,
+    `  autoFit: ${autoFit}`,
+    `  maxWidth: ${maxWidth}`,
+    '  duration: 300',
+    '  initialExpandLevel: 2',
+    '---',
+  ].join('\n');
+
+  const safeTitle = esc(title);
+  const md = `${frontmatter}\n${markdown}`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${safeTitle}</title>
+  <script src="https://cdn.jsdelivr.net/npm/markmap-autoloader@0.16"><\/script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #fafaf9; }
+    .mm-bar {
+      height: 44px; display: flex; align-items: center; gap: 10px;
+      padding: 0 16px; background: #fff; border-bottom: 1px solid #e5e5e3;
+      font-size: 13px; color: #6b6b66;
+    }
+    .mm-bar .title { font-weight: 500; color: #1a1a18; }
+    .mm-bar .badge {
+      padding: 2px 8px; background: #EEEDFE; color: #3C3489;
+      border-radius: 10px; font-size: 11px;
+    }
+    .mm-bar .hint { margin-left: 4px; color: #aaa9a3; font-size: 12px; }
+    .markmap { width: 100%; height: calc(100vh - 44px); }
+  <\/style>
+</head>
+<body>
+  <div class="mm-bar">
+    <span class="badge">XMind<\/span>
+    <span class="title">${safeTitle}<\/span>
+    <span class="hint">Scroll = zoom · Drag = pan · Click node = collapse<\/span>
+  <\/div>
+  <div class="markmap">
+    <script type="text/template">
+${md}
+    <\/script>
+  <\/div>
+<\/body>
+<\/html>`;
+}

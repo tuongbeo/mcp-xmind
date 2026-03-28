@@ -10,6 +10,7 @@ import { registerSearchTools } from './tools/search.js';
 import { registerTaskTools } from './tools/tasks.js';
 import { registerExportTools } from './tools/export.js';
 import { registerStorageTools } from './tools/storage.js';
+import { registerRenderTools } from './tools/render.js';
 
 export interface Env {
   XMIND_STORE: KVNamespace;
@@ -27,6 +28,7 @@ function createServer(env: Env): McpServer {
   registerTaskTools(server, env);
   registerExportTools(server, env);
   registerStorageTools(server, env);
+  registerRenderTools(server, env);
   return server;
 }
 
