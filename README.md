@@ -3,9 +3,11 @@
 A Cloudflare Workers MCP server for reading, creating, editing, and exporting XMind mind maps.
 All files and metadata are stored in a **single Cloudflare KV namespace** — no R2 required, works on the free plan.
 
+Live endpoint: **https://xmind.tuongbeo.workers.dev**
+
 ## Features
 
-18 tools across 6 categories:
+19 tools across 7 categories:
 
 | Category | Tools |
 |---|---|
@@ -15,6 +17,18 @@ All files and metadata are stored in a **single Cloudflare KV namespace** — no
 | Tasks | `get_todo_tasks` |
 | Export | `export_to_markdown`, `export_to_json`, `export_to_html` |
 | Storage | `upload_xmind`, `get_file_url` |
+| **Render** | **`render_xmind`** — interactive markmap inline in Claude Chat / Cowork |
+
+### render_xmind — Inline Mindmap
+
+`render_xmind` returns a self-contained HTML artifact with:
+- Interactive markmap (zoom, pan, click to collapse/expand)
+- Task status icons: ☐ todo · ◑ in-progress · ☑ done
+- **Download .xmind button** (base64 embedded, works offline)
+- 4 themes: `default`, `colorful`, `dark`, `forest`
+
+Uses `markmap-lib` + `markmap-view` with explicit JS init — **not** `markmap-autoloader`
+(autoloader fails in Claude's sandboxed artifact iframe with a YAML worker CSP error).
 
 ## Quick Start
 
@@ -107,7 +121,8 @@ POST /mcp → Cloudflare Worker (src/index.ts)
                 │       ├── tools/search.ts
                 │       ├── tools/tasks.ts
                 │       ├── tools/export.ts
-                │       └── tools/storage.ts
+                │       ├── tools/storage.ts
+                │       └── tools/render.ts
                 │
                 └── KVAdapter (src/storage/kv-adapter.ts)
                         └── XMIND_STORE (single KV namespace)

@@ -185,7 +185,7 @@ type ErrorCode =
 
 ---
 
-## Tool Reference (18 tools)
+## Tool Reference (19 tools)
 
 | Tool | Category | Description |
 |---|---|---|
@@ -207,6 +207,69 @@ type ErrorCode =
 | `export_to_markdown` | Export | Render map as Markdown outline |
 | `export_to_json` | Export | Serialize document to JSON |
 | `export_to_html` | Export | Render as collapsible HTML tree |
+| `render_xmind` | **Render** | **Interactive markmap inline in Claude Chat/Cowork** |
+
+---
+
+## render_xmind — Inline Mindmap Rendering
+
+Returns a self-contained HTML artifact. Claude renders it inline — no download required.
+
+```typescript
+render_xmind({
+  fileKey:      'uuid/file.xmind',
+  sheetIndex:   0,            // default: 0
+  theme:        'default',    // 'default' | 'colorful' | 'dark' | 'forest'
+  maxDepth:     3,            // optional, limits tree depth
+  includeNotes: false,        // default: false
+  includeTasks: true,         // default: true — shows ☐ ◑ ☑ icons
+})
+// returns: { html, nodeCount, sheetTitle, sheetIndex }
+```
+
+### Why NOT markmap-autoloader
+
+`markmap-autoloader` tries to parse YAML frontmatter via a web worker, which is
+blocked in Claude's sandboxed artifact iframe, causing:
+> `Cannot read properties of undefined (reading 'markmap')`
+
+**Fix:** Use `markmap-lib` + `markmap-view` with an explicit `<script type="module">`
+and `Markmap.create()` call. No YAML parsing, no workers.
+
+```html
+<!-- ❌ WRONG — fails in sandboxed iframe -->
+<script src="https://cdn.jsdelivr.net/npm/markmap-autoloader@0.16"></script>
+<div class="markmap"><script type="text/template">---\nmarkmap:\n  ...\n---\n# ...</script></div>
+
+<!-- ✅ CORRECT — explicit init, works everywhere -->
+<script type="module">
+  const [lib, view] = await Promise.all([
+    import('https://cdn.jsdelivr.net/npm/markmap-lib@0.16/dist/browser/index.js'),
+    import('https://cdn.jsdelivr.net/npm/markmap-view@0.16/dist/browser/index.js'),
+  ]);
+  const { root } = new lib.Transformer().transform(markdownString);
+  view.Markmap.create(svgElement, { colorFreezeLevel: 2, color: [...], ... }, root);
+</script>
+```
+
+### Download button
+
+`render_xmind` fetches the raw base64 from KV via `getRawBase64()` and embeds it
+directly in the HTML. The download button uses `atob()` → `Blob` → `<a download>`,
+so it works entirely offline after initial load.
+
+### Markdown format (toMarkmapMarkdown)
+
+```
+# Root Topic
+## Child (depth 1)
+### Grandchild (depth 2)
+#### Leaf (depth 3)
+- Deep node (depth > 6, uses list item)
+### Task done ☑
+### Task in-progress ◑
+### Task todo ☐
+```
 
 ---
 
@@ -217,3 +280,32 @@ type ErrorCode =
 - **No Durable Objects**: Server is fully stateless — each tool call reads from KV, mutates in memory, writes back. No session caching.
 - **No image export**: CF Workers has no DOM/canvas for visual rendering.
 - **No XMind.com sync**: Cloud API not publicly documented.
+- **render_xmind CDN dep**: Requires internet at render time (jsdelivr). Claude Desktop offline won't load markmap JS.
+- **render_xmind node limit**: Recommend ≤200 nodes. Larger maps use `maxDepth` to limit.
+
+---
+
+## Changelog
+
+### v2.1.1 (latest)
+- **FIX**: Replace `markmap-autoloader` with explicit `markmap-lib` + `markmap-view` init
+  in `buildMarkmapHtml()` — fixes `Cannot read properties of undefined (reading 'markmap')`
+  error caused by autoloader's YAML-parsing web worker being blocked in sandboxed iframes
+- **NEW**: Download `.xmind` button embedded in `render_xmind` HTML output (base64 → Blob)
+- Tests: 143/143 pass
+
+### v2.1.0
+- **NEW**: `render_xmind` tool — returns markmap HTML for inline rendering in Claude Chat
+- **NEW**: `toMarkmapMarkdown()` + `buildMarkmapHtml()` in `xmind-exporter.ts`
+- **FIX**: `parseContentXml` exported (was internal)
+- **FIX**: Parser handles both child formats (wrapped `<topics>` and direct `<topic>`)
+- **FIX**: Tasks round-trip via `<task status="..." priority="..."/>`
+- **FIX**: Relationships round-trip via `<relationships><relationship/>`
+- **FIX**: CORRUPT_FILE error message matches test expectation
+- Tests: 106 → 140 (+34)
+
+### v2.0.1
+- Test coverage expansion, XML parser children bug fix
+
+### v2.0.0
+- Full rewrite as CF Workers MCP server, KV-only storage, 18 tools

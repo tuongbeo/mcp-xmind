@@ -398,3 +398,91 @@ describe('tool: upload_xmind / get_file_url', () => {
     })).rejects.toThrow();
   });
 });
+
+// ── render_xmind ─────────────────────────────────────────────────────────────
+describe('tool: render_xmind', () => {
+  let server: McpServer;
+  let env: Env;
+  let fileKey: string;
+
+  beforeEach(async () => {
+    env = makeMockEnv();
+    server = new McpServer({ name: 'test', version: '1.0.0' });
+    // render_xmind depends on create (to seed KV) + render tool itself
+    registerCreateTool(server, env);
+    const { registerRenderTools } = await import('../../src/tools/render.js');
+    registerRenderTools(server, env);
+    const r = await callRegisteredTool(server, 'create_xmind', {
+      fileName: 'render-handler-test.xmind',
+      sheets: [{
+        title: 'Handler Test',
+        rootTopic: {
+          title: 'Root',
+          children: [
+            { title: 'Alpha', children: [{ title: 'A1' }, { title: 'A2' }] },
+            { title: 'Beta',  tasks: { status: 'done' } },
+            { title: 'Gamma', tasks: { status: 'in-progress' } },
+          ],
+        },
+      }],
+    });
+    fileKey = r.fileKey as string;
+  });
+
+  it('returns html, nodeCount and sheetTitle', async () => {
+    const r = await callRegisteredTool(server, 'render_xmind', { fileKey }) as {
+      html: string; nodeCount: number; sheetTitle: string; sheetIndex: number;
+    };
+    expect(typeof r.html).toBe('string');
+    expect(r.html.length).toBeGreaterThan(200);
+    expect(r.nodeCount).toBe(6);
+    expect(r.sheetTitle).toBe('Handler Test');
+    expect(r.sheetIndex).toBe(0);
+  });
+
+  it('html uses markmap-lib not autoloader', async () => {
+    const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey }) as { html: string };
+    expect(html).toContain('markmap-lib');
+    expect(html).toContain('markmap-view');
+    expect(html).not.toContain('markmap-autoloader');
+  });
+
+  it('html contains Markmap.create call', async () => {
+    const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey }) as { html: string };
+    expect(html).toContain('Markmap.create');
+  });
+
+  it('html includes download button with base64 payload', async () => {
+    const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey }) as { html: string };
+    expect(html).toContain('Download .xmind');
+    expect(html).toContain('dlXmind');
+    expect(html).toContain('atob(');
+  });
+
+  it('task status icons appear for done and in-progress', async () => {
+    const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey, includeTasks: true }) as { html: string };
+    expect(html).toContain('☑');
+    expect(html).toContain('◑');
+  });
+
+  it('respects maxDepth — no h3 when maxDepth=2', async () => {
+    const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey, maxDepth: 2 }) as { html: string };
+    expect(html).toContain('## Alpha');
+    expect(html).not.toContain('### A1');
+  });
+
+  it('applies theme — colorful has colorFreezeLevel 6', async () => {
+    const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey, theme: 'colorful' }) as { html: string };
+    expect(html).toContain('colorFreezeLevel: 6');
+  });
+
+  it('throws NODE_NOT_FOUND for invalid sheetIndex', async () => {
+    await expect(callRegisteredTool(server, 'render_xmind', { fileKey, sheetIndex: 99 }))
+      .rejects.toThrow('does not exist');
+  });
+
+  it('throws FILE_NOT_FOUND for missing file', async () => {
+    await expect(callRegisteredTool(server, 'render_xmind', { fileKey: 'no/file.xmind' }))
+      .rejects.toThrow('File not found:');
+  });
+});
