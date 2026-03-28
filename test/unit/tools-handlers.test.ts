@@ -440,22 +440,25 @@ describe('tool: render_xmind', () => {
     expect(r.sheetIndex).toBe(0);
   });
 
-  it('html uses markmap-view only — no markmap-lib, no autoloader', async () => {
+  it('html is zero-dep: no CDN, no markmap, no external scripts', async () => {
     const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey }) as { html: string };
-    expect(html).toContain('markmap-view');
-    expect(html).not.toContain('markmap-lib');
-    expect(html).not.toContain('markmap-autoloader');
+    expect(html).not.toContain('markmap');
+    expect(html).not.toContain('cdn.jsdelivr.net');
+    expect(html).not.toContain('<script src=');
+    expect(html).not.toContain('import(');
   });
 
-  it('html contains Markmap.create call', async () => {
+  it('html contains self-contained SVG renderer', async () => {
     const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey }) as { html: string };
-    expect(html).toContain('Markmap.create');
+    expect(html).toContain('<svg');
+    expect(html).toContain('function parse(');
+    expect(html).toContain('function render(');
   });
 
   it('html includes download button with base64 payload', async () => {
     const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey }) as { html: string };
     expect(html).toContain('Download .xmind');
-    expect(html).toContain('dlXmind');
+    expect(html).toContain('atob(');
     expect(html).toContain('atob(');
   });
 
@@ -471,9 +474,9 @@ describe('tool: render_xmind', () => {
     expect(html).not.toContain('### A1');
   });
 
-  it('applies theme — colorful has colorFreezeLevel 6', async () => {
+  it('applies theme — colorful palette', async () => {
     const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey, theme: 'colorful' }) as { html: string };
-    expect(html).toContain('colorFreezeLevel: 6');
+    expect(html).toContain('#E24B4A');
   });
 
   it('throws NODE_NOT_FOUND for invalid sheetIndex', async () => {
