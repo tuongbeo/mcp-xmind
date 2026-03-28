@@ -440,10 +440,10 @@ describe('tool: render_xmind', () => {
     expect(r.sheetIndex).toBe(0);
   });
 
-  it('html uses markmap-lib not autoloader', async () => {
+  it('html uses markmap-view only — no markmap-lib, no autoloader', async () => {
     const { html } = await callRegisteredTool(server, 'render_xmind', { fileKey }) as { html: string };
-    expect(html).toContain('markmap-lib');
     expect(html).toContain('markmap-view');
+    expect(html).not.toContain('markmap-lib');
     expect(html).not.toContain('markmap-autoloader');
   });
 

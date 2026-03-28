@@ -240,16 +240,33 @@ export function buildMarkmapHtml(
     ${downloadFn}
   <\/script>
   <script type="module">
+    // Parse ATX headings into markmap INode tree — no Transformer, no YAML parser
+    function mdToTree(md) {
+      const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const lines = md.trim().split('\\n');
+      const root = { content: '', children: [], payload: {} };
+      const stack = [{ node: root, depth: 0 }];
+      for (const line of lines) {
+        const hm = line.match(/^(#{1,6})\\s+(.*)/);
+        if (hm) {
+          const depth = hm[1].length;
+          const node = { content: esc(hm[2].trim()), children: [], payload: {} };
+          while (stack.length > 1 && stack[stack.length-1].depth >= depth) stack.pop();
+          stack[stack.length-1].node.children.push(node);
+          stack.push({ node, depth });
+        } else if (line.match(/^-\\s+(.+)/)) {
+          const node = { content: esc(line.replace(/^-\\s+/,'')), children: [], payload: {} };
+          stack[stack.length-1].node.children.push(node);
+        }
+      }
+      return root.children[0] ?? root;
+    }
     async function render() {
       try {
-        const [lib, view] = await Promise.all([
-          import('https://cdn.jsdelivr.net/npm/markmap-lib@0.16/dist/browser/index.js'),
-          import('https://cdn.jsdelivr.net/npm/markmap-view@0.16/dist/browser/index.js'),
-        ]);
-        const { Transformer } = lib;
+        const view = await import('https://cdn.jsdelivr.net/npm/markmap-view@0.16/dist/browser/index.js');
         const { Markmap } = view;
         const md = \`${safeMd}\`;
-        const { root } = new Transformer().transform(md);
+        const root = mdToTree(md);
         const svg = document.getElementById('mm-svg');
         const mm = Markmap.create(svg, {
           colorFreezeLevel: ${freezeLevel},

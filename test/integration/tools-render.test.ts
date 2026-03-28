@@ -104,14 +104,21 @@ describe('buildMarkmapHtml', () => {
     expect(html).toContain('</html>');
   });
 
-  it('loads markmap-lib and markmap-view from jsdelivr (NOT autoloader)', () => {
+  it('loads only markmap-view (no markmap-lib, no autoloader)', () => {
     const html = buildMarkmapHtml(md, 'Tech Architecture');
-    expect(html).toContain('cdn.jsdelivr.net/npm/markmap-lib');
     expect(html).toContain('cdn.jsdelivr.net/npm/markmap-view');
+    expect(html).not.toContain('markmap-lib');
     expect(html).not.toContain('markmap-autoloader');
   });
 
-  it('embeds markdown as JS template literal', () => {
+  it('uses custom mdToTree parser, not Transformer import', () => {
+    const html = buildMarkmapHtml(md, 'Tech Architecture');
+    expect(html).toContain('mdToTree');
+    // No import of Transformer from markmap-lib
+    expect(html).not.toContain("import('https://cdn.jsdelivr.net/npm/markmap-lib");
+  });
+
+  it('embeds markdown as JS string (not text/template)', () => {
     const html = buildMarkmapHtml(md, 'Tech Architecture');
     expect(html).toContain('# mcp-xmind Architecture');
     expect(html).not.toContain('type="text/template"');
