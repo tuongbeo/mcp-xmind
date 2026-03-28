@@ -134,17 +134,32 @@ export function toMarkmapMarkdown(sheet: XMindSheet, opts: ToMarkmapOptions = {}
   return lines.join('\n');
 }
 
+export interface BuildMarkmapHtmlOpts {
+  theme?: 'default' | 'colorful' | 'dark' | 'forest';
+  maxWidth?: number;
+  /** base64-encoded .xmind bytes — enables "Download .xmind" button */
+  xmindBase64?: string;
+  /** filename for the .xmind download, e.g. "my-map.xmind" */
+  fileName?: string;
+}
+
 /**
  * Build a self-contained markmap HTML string for inline rendering
  * inside Claude Chat / Claude Cowork artifacts.
- * Uses markmap-autoloader from jsdelivr CDN (within CSP allowlist).
+ *
+ * Uses markmap-lib + markmap-view with explicit JS init via <script type="module">.
+ * Does NOT use markmap-autoloader — autoloader tries to parse YAML frontmatter
+ * via a web worker which is blocked in sandboxed iframes, causing:
+ *   "Cannot read properties of undefined (reading 'markmap')"
+ *
+ * CDN: cdn.jsdelivr.net (within CF Workers CSP allowlist).
  */
 export function buildMarkmapHtml(
   markdown: string,
   title: string,
-  opts: { theme?: 'default' | 'colorful' | 'dark' | 'forest'; autoFit?: boolean; maxWidth?: number } = {}
+  opts: BuildMarkmapHtmlOpts = {}
 ): string {
-  const { theme = 'default', autoFit = true, maxWidth = 320 } = opts;
+  const { theme = 'default', maxWidth = 300, xmindBase64, fileName } = opts;
 
   const colorMap: Record<string, string[]> = {
     default:  ['#534AB7', '#1D9E75', '#185FA5', '#BA7517', '#993556', '#0F6E56'],
@@ -155,56 +170,105 @@ export function buildMarkmapHtml(
   const colors = colorMap[theme] ?? colorMap.default;
   const freezeLevel = theme === 'colorful' ? 6 : 2;
 
-  const frontmatter = [
-    '---',
-    'markmap:',
-    `  colorFreezeLevel: ${freezeLevel}`,
-    `  color: [${colors.map(c => `"${c}"`).join(', ')}]`,
-    `  autoFit: ${autoFit}`,
-    `  maxWidth: ${maxWidth}`,
-    '  duration: 300',
-    '  initialExpandLevel: 2',
-    '---',
-  ].join('\n');
-
   const safeTitle = esc(title);
-  const md = `${frontmatter}\n${markdown}`;
+  const safeFileName = esc(fileName ?? `${title}.xmind`);
+  // Embed markdown as a JS template literal — escape backticks and $ signs
+  const safeMd = markdown.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+  const colorsJson = JSON.stringify(colors);
+
+  const downloadBtn = xmindBase64
+    ? `<button class="dl-btn" onclick="dlXmind()">⬇ Download .xmind<\/button>`
+    : '';
+
+  const downloadFn = xmindBase64
+    ? `window.dlXmind = function() {
+      var b64 = '${xmindBase64}';
+      var bin = atob(b64);
+      var arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      var blob = new Blob([arr], { type: 'application/vnd.xmind.workbook' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = '${safeFileName}';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    };`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${safeTitle}</title>
-  <script src="https://cdn.jsdelivr.net/npm/markmap-autoloader@0.16"><\/script>
+  <title>${safeTitle}<\/title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, sans-serif; background: #fafaf9; }
+    body { font-family: system-ui, sans-serif; background: #fafaf9; display: flex; flex-direction: column; height: 100vh; }
     .mm-bar {
-      height: 44px; display: flex; align-items: center; gap: 10px;
-      padding: 0 16px; background: #fff; border-bottom: 1px solid #e5e5e3;
+      height: 44px; flex-shrink: 0;
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 14px; background: #fff; border-bottom: 1px solid #e5e5e3;
       font-size: 13px; color: #6b6b66;
     }
-    .mm-bar .title { font-weight: 500; color: #1a1a18; }
-    .mm-bar .badge {
-      padding: 2px 8px; background: #EEEDFE; color: #3C3489;
-      border-radius: 10px; font-size: 11px;
+    .badge { padding: 2px 8px; background: #EEEDFE; color: #3C3489; border-radius: 10px; font-size: 11px; }
+    .title { font-weight: 500; color: #1a1a18; }
+    .hint { color: #aaa9a3; font-size: 12px; }
+    .spacer { flex: 1; }
+    .dl-btn {
+      padding: 4px 12px; border-radius: 6px; border: 1px solid #d4d4d0;
+      background: #f5f5f3; color: #333; font-size: 12px;
+      cursor: pointer; font-family: inherit;
     }
-    .mm-bar .hint { margin-left: 4px; color: #aaa9a3; font-size: 12px; }
-    .markmap { width: 100%; height: calc(100vh - 44px); }
+    .dl-btn:hover { background: #eaeae8; }
+    #mm-wrap { flex: 1; overflow: hidden; position: relative; }
+    #mm-wrap svg { width: 100%; height: 100%; display: block; }
+    #mm-err { padding: 20px; color: #c0392b; font-size: 13px; display: none; white-space: pre-wrap; }
   <\/style>
-</head>
+<\/head>
 <body>
   <div class="mm-bar">
     <span class="badge">XMind<\/span>
     <span class="title">${safeTitle}<\/span>
-    <span class="hint">Scroll = zoom · Drag = pan · Click node = collapse<\/span>
+    <span class="hint">Scroll = zoom · Drag = pan · Click = collapse<\/span>
+    <span class="spacer"><\/span>
+    ${downloadBtn}
   <\/div>
-  <div class="markmap">
-    <script type="text/template">
-${md}
-    <\/script>
-  <\/div>
+  <div id="mm-err"><\/div>
+  <div id="mm-wrap"><svg id="mm-svg"><\/svg><\/div>
+  <script>
+    ${downloadFn}
+  <\/script>
+  <script type="module">
+    async function render() {
+      try {
+        const [lib, view] = await Promise.all([
+          import('https://cdn.jsdelivr.net/npm/markmap-lib@0.16/dist/browser/index.js'),
+          import('https://cdn.jsdelivr.net/npm/markmap-view@0.16/dist/browser/index.js'),
+        ]);
+        const { Transformer } = lib;
+        const { Markmap } = view;
+        const md = \`${safeMd}\`;
+        const { root } = new Transformer().transform(md);
+        const svg = document.getElementById('mm-svg');
+        const mm = Markmap.create(svg, {
+          colorFreezeLevel: ${freezeLevel},
+          color: ${colorsJson},
+          duration: 300,
+          maxWidth: ${maxWidth},
+          zoom: true,
+          pan: true,
+          initialExpandLevel: 2,
+        }, root);
+        setTimeout(() => mm.fit(), 100);
+      } catch (e) {
+        const el = document.getElementById('mm-err');
+        el.style.display = 'block';
+        el.textContent = 'Render error: ' + e.message;
+      }
+    }
+    render();
+  <\/script>
 <\/body>
 <\/html>`;
 }

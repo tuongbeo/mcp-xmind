@@ -1,6 +1,9 @@
 // src/tools/render.ts — render_xmind tool
-// Returns a self-contained markmap HTML string that Claude renders
-// inline as an artifact in Claude Chat / Claude Cowork.
+// Returns a self-contained markmap HTML that Claude renders as an artifact.
+// HTML includes:
+//   - Interactive markmap (zoom, pan, collapse/expand)
+//   - "Download .xmind" button with embedded base64 bytes
+//   - "Download HTML" is natively supported by Claude artifact panel
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Env } from '../index.js';
@@ -19,7 +22,10 @@ export function registerRenderTools(server: McpServer, env: Env): void {
     title: 'Render XMind as inline mindmap',
     description: [
       'Render an XMind file as an interactive mindmap directly inside Claude Chat / Claude Cowork.',
-      'Returns a self-contained markmap HTML artifact — no download required.',
+      'Returns a self-contained HTML artifact with:',
+      '  • Interactive markmap (zoom, pan, click to collapse/expand)',
+      '  • "Download .xmind" button embedded in the toolbar',
+      '  • Task status icons ☐ ◑ ☑ on nodes',
       '',
       'Args:',
       '  - fileKey        : KV key of the .xmind file (required)',
@@ -32,17 +38,22 @@ export function registerRenderTools(server: McpServer, env: Env): void {
       'Returns: { html, nodeCount, sheetTitle, sheetIndex }',
     ].join('\n'),
     inputSchema: z.object({
-      fileKey:       z.string().min(1).describe('KV key of the .xmind file'),
-      sheetIndex:    z.number().int().min(0).default(0).describe('Sheet index (0-based)'),
-      theme:         z.enum(['default', 'colorful', 'dark', 'forest']).default('default'),
-      maxDepth:      z.number().int().min(1).max(10).optional().describe('Max depth to render'),
-      includeNotes:  z.boolean().default(false).describe('Show note preview under node'),
-      includeTasks:  z.boolean().default(true).describe('Show task status icons'),
+      fileKey:      z.string().min(1).describe('KV key of the .xmind file'),
+      sheetIndex:   z.number().int().min(0).default(0).describe('Sheet index (0-based)'),
+      theme:        z.enum(['default', 'colorful', 'dark', 'forest']).default('default'),
+      maxDepth:     z.number().int().min(1).max(10).optional().describe('Max depth to render'),
+      includeNotes: z.boolean().default(false).describe('Show note preview under node'),
+      includeTasks: z.boolean().default(true).describe('Show task status icons'),
     }),
     annotations: { readOnlyHint: true, destructiveHint: false },
   }, async ({ fileKey, sheetIndex, theme, maxDepth, includeNotes, includeTasks }) => {
     const kv = new KVAdapter(env.XMIND_STORE);
-    const doc = await readDoc(kv, fileKey);
+
+    // Fetch document (for rendering) + raw base64 (for download button) in parallel
+    const [doc, rawBase64] = await Promise.all([
+      readDoc(kv, fileKey),
+      kv.getRawBase64(fileKey),   // already base64 in KV — no re-encode needed
+    ]);
 
     const sheet = doc.sheets[sheetIndex];
     if (!sheet) {
@@ -52,8 +63,15 @@ export function registerRenderTools(server: McpServer, env: Env): void {
       );
     }
 
+    // Derive a clean filename from the fileKey (strip UUID prefix)
+    const fileName = fileKey.split('/').pop() ?? 'mindmap.xmind';
+
     const markdown = toMarkmapMarkdown(sheet, { maxDepth, includeNotes, includeTasks });
-    const html = buildMarkmapHtml(markdown, sheet.title, { theme });
+    const html = buildMarkmapHtml(markdown, sheet.title, {
+      theme,
+      xmindBase64: rawBase64 ?? undefined,
+      fileName,
+    });
     const nodeCount = countTopic(sheet.rootTopic);
 
     return {

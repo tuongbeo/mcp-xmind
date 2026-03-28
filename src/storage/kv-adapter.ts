@@ -24,6 +24,11 @@ export class KVAdapter {
     return bytes.buffer;
   }
 
+  /** Return the raw base64 string stored in KV — avoids a decode+re-encode round-trip. */
+  async getRawBase64(fileKey: string): Promise<string | null> {
+    return this.kv.get(`file:${fileKey}`);
+  }
+
   async deleteFile(fileKey: string): Promise<void> {
     await Promise.all([
       this.kv.delete(`file:${fileKey}`),
